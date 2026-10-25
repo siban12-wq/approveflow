@@ -1,5 +1,11 @@
 const TOKEN_KEY = "af_access";
 const REFRESH_KEY = "af_refresh";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function getApiUrl(path: string) {
+  if (!path.startsWith("/")) path = `/${path}`;
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -20,9 +26,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(path, { ...init, headers });
+
+  const url = getApiUrl(path);
+  const res = await fetch(url, { ...init, headers });
   if (res.status === 401 && localStorage.getItem(REFRESH_KEY) && path !== "/api/v1/auth/refresh") {
-    const refreshed = await fetch("/api/v1/auth/refresh", {
+    const refreshed = await fetch(getApiUrl("/api/v1/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: localStorage.getItem(REFRESH_KEY) }),
