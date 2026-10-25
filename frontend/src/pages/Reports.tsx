@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, getToken } from "@/lib/api";
+import { api, getToken, toApiUrl } from "@/lib/api";
 import { DataTable } from "@/components/ui/DataTable";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -16,7 +16,7 @@ export default function Reports() {
 
   async function download(kind: "csv" | "pdf") {
     const token = getToken();
-    const res = await fetch(`/api/v1/reports/export.${kind}`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(toApiUrl(`/api/v1/reports/export.${kind}`), { headers: { Authorization: `Bearer ${token}` } });
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
