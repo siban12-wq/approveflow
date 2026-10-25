@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://approveflow:approveflow@localhost:5432/approveflow"
     sqlite_path: str = "./approveflow.db"
 
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,https://siban12-wq.github.io"
     upload_dir: str = "./uploads"
     max_upload_mb: int = 10
 

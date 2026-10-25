@@ -17,6 +17,6 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://your-vercel-app.vercel.app
+        value: https://siban12-wq.github.io,http://localhost:5173
       - key: DEMO_MODE
         value: true
