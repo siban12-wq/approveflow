@@ -14,7 +14,11 @@ from app.models.entities import (
     AlertRule,
     Application,
     Base,
+    CalendarHoliday,
+    CalendarPolicy,
+    Deadline,
     Document,
+    DocumentExtraction,
     Escalation,
     EscalationRule,
     EvcVisit,
@@ -28,6 +32,7 @@ from app.models.entities import (
     WorkflowStage,
     WorkflowTemplate,
 )
+from app.services.deadline_engine import deadline_engine
 from app.workflows.engine import TYPE_TO_TEMPLATE, engine as wf
 
 DEMO_PASSWORD = "Demo@123"
@@ -69,12 +74,12 @@ TEMPLATES = [
 
 STAGE_META = {
     "SUBMITTED": ("Submitted", 5, ["institution_user"], False),
-    "SCRUTINY": ("Scrutiny", 15, ["regional_officer"], True),
-    "EVC_QUEUE": ("EVC Queue", 30, ["regional_officer"], False),
-    "EVC_VISIT": ("EVC Visit", 15, ["committee_member", "regional_officer"], True),
-    "EVC_REPORT_REVIEW": ("EVC Report Review", 10, ["regional_officer", "bureau_officer"], True),
-    "SAC_SHC": ("SAC/SHC", 20, ["committee_member", "bureau_officer"], True),
-    "DECISION_PENDING": ("Decision Pending", 15, ["bureau_officer", "super_admin"], True),
+    "SCRUTINY": ("Scrutiny", 15, ["regional_officer", "scrutiny_officer"], True),
+    "EVC_QUEUE": ("EVC Queue", 30, ["regional_officer", "evc_coordinator"], False),
+    "EVC_VISIT": ("EVC Visit", 15, ["committee_member", "regional_officer", "evc_coordinator"], True),
+    "EVC_REPORT_REVIEW": ("EVC Report Review", 10, ["regional_officer", "bureau_officer", "evc_coordinator"], True),
+    "SAC_SHC": ("SAC/SHC", 20, ["committee_member", "bureau_officer", "competent_authority"], True),
+    "DECISION_PENDING": ("Decision Pending", 15, ["bureau_officer", "super_admin", "competent_authority"], True),
     "CLOSED": ("Closed", 0, ["super_admin"], False),
 }
 
@@ -95,11 +100,14 @@ def seed_all(db) -> None:
     now = clock.now()
     roles = {}
     for code, name in [
-        ("super_admin", "Super Admin"),
+        ("super_admin", "System Administrator"),
         ("bureau_officer", "Bureau Officer"),
         ("regional_officer", "Regional Officer"),
-        ("committee_member", "Committee Member"),
-        ("institution_user", "Institution User"),
+        ("scrutiny_officer", "Scrutiny Officer"),
+        ("committee_member", "EVC Committee Member"),
+        ("evc_coordinator", "EVC Coordinator"),
+        ("competent_authority", "Competent Authority"),
+        ("institution_user", "Institution Administrator"),
     ]:
         r = Role(code=code, name=name)
         db.add(r)
@@ -121,33 +129,48 @@ def seed_all(db) -> None:
             states_by_region[rg.id].append(st)
 
     hashed = hash_password(DEMO_PASSWORD)
-    super_u = User(email="super@approveflow.demo", full_name="Ananya Rao", hashed_password=hashed, role_id=roles["super_admin"].id, is_active=True)
-    bureau = User(email="bureau@approveflow.demo", full_name="Vikram Menon", hashed_password=hashed, role_id=roles["bureau_officer"].id, is_active=True)
-    db.add_all([super_u, bureau])
+
+    def _acct(**kwargs):
+        kwargs.setdefault("is_active", True)
+        kwargs.setdefault("account_status", "active")
+        kwargs.setdefault("email_verified", True)
+        kwargs.setdefault("created_at", now)
+        kwargs.setdefault("token_version", 0)
+        return User(**kwargs)
+
+    super_u = _acct(email="super@approveflow.demo", full_name="Ananya Rao", hashed_password=hashed, role_id=roles["super_admin"].id)
+    bureau = _acct(email="bureau@approveflow.demo", full_name="Vikram Menon", hashed_password=hashed, role_id=roles["bureau_officer"].id)
+    scrutiny = _acct(email="scrutiny@approveflow.demo", full_name="Kavita Sharma", hashed_password=hashed, role_id=roles["scrutiny_officer"].id)
+    authority = _acct(email="authority@approveflow.demo", full_name="Justice (Retd.) N. Krishnan", hashed_password=hashed, role_id=roles["competent_authority"].id)
+    db.add_all([super_u, bureau, scrutiny, authority])
     db.flush()
 
     regional_users: list[User] = []
     for i, rg in enumerate(regions):
-        u = User(
+        u = _acct(
             email=f"ro.{rg.code.lower()}@approveflow.demo" if i else "regional@approveflow.demo",
             full_name=f"RO {rg.name}",
             hashed_password=hashed,
             role_id=roles["regional_officer"].id,
             region_id=rg.id,
-            is_active=True,
         )
         db.add(u)
         db.flush()
         regional_users.append(u)
 
-    committee = User(
+    committee = _acct(
         email="committee@approveflow.demo",
         full_name="Dr. Meera Iyer",
         hashed_password=hashed,
         role_id=roles["committee_member"].id,
-        is_active=True,
     )
-    db.add(committee)
+    evc_coord = _acct(
+        email="evc@approveflow.demo",
+        full_name="Arjun Deshmukh",
+        hashed_password=hashed,
+        role_id=roles["evc_coordinator"].id,
+    )
+    db.add_all([committee, evc_coord])
     db.flush()
 
     institutions: list[Institution] = []
@@ -169,16 +192,27 @@ def seed_all(db) -> None:
         db.flush()
         institutions.append(inst)
 
-    inst_user = User(
+    inst_user = _acct(
         email="institution@approveflow.demo",
         full_name="Principal, Nalanda Institute of Technology",
         hashed_password=hashed,
         role_id=roles["institution_user"].id,
         institution_id=institutions[0].id,
         region_id=institutions[0].region_id,
-        is_active=True,
     )
-    db.add(inst_user)
+    pending = _acct(
+        email="pending@approveflow.demo",
+        full_name="Dr. S. Banerjee",
+        hashed_password=hashed,
+        role_id=roles["institution_user"].id,
+        is_active=False,
+        account_status="pending",
+        email_verified=True,
+        requested_role="institution_user",
+        requested_institution_name="Chilika College of Engineering (demo request)",
+        status_reason="Awaiting institutional verification",
+    )
+    db.add_all([inst_user, pending])
     db.flush()
 
     tpls: dict[str, WorkflowTemplate] = {}
@@ -398,6 +432,123 @@ def seed_all(db) -> None:
         )
 
     db.commit()
+
+
+AUTH_ROLES = [
+    ("super_admin", "System Administrator"),
+    ("bureau_officer", "Bureau Officer"),
+    ("regional_officer", "Regional Officer"),
+    ("scrutiny_officer", "Scrutiny Officer"),
+    ("committee_member", "EVC Committee Member"),
+    ("evc_coordinator", "EVC Coordinator"),
+    ("competent_authority", "Competent Authority"),
+    ("institution_user", "Institution Administrator"),
+]
+
+
+def ensure_auth_accounts() -> None:
+    """Add new roles/demo users to an already-seeded database without wiping data."""
+    db = SessionLocal()
+    try:
+        if not db.execute(select(Role)).first():
+            return
+        existing = {r.code for r in db.query(Role).all()}
+        for code, name in AUTH_ROLES:
+            if code not in existing:
+                db.add(Role(code=code, name=name))
+        db.flush()
+        roles = {r.code: r for r in db.query(Role).all()}
+        hashed = hash_password(DEMO_PASSWORD)
+        extras = [
+            ("scrutiny@approveflow.demo", "Kavita Sharma", "scrutiny_officer"),
+            ("evc@approveflow.demo", "Arjun Deshmukh", "evc_coordinator"),
+            ("authority@approveflow.demo", "Justice (Retd.) N. Krishnan", "competent_authority"),
+        ]
+        for email, name, role in extras:
+            if role not in roles:
+                continue
+            if db.query(User).filter(User.email == email).first():
+                continue
+            db.add(
+                User(
+                    email=email,
+                    full_name=name,
+                    hashed_password=hashed,
+                    role_id=roles[role].id,
+                    is_active=True,
+                    account_status="active",
+                    email_verified=True,
+                    created_at=clock.now(),
+                    token_version=0,
+                )
+            )
+        for user in db.query(User).all():
+            if not user.account_status:
+                user.account_status = "active" if user.is_active else "pending"
+            if user.token_version is None:
+                user.token_version = 0
+
+        # Ensure default Calendar Policy
+        cal = db.query(CalendarPolicy).filter(CalendarPolicy.code == "AICTE_STD_5DAY").first()
+        if not cal:
+            cal = CalendarPolicy(
+                code="AICTE_STD_5DAY",
+                name="AICTE National 5-Day Administrative Calendar",
+                working_weekdays=[0, 1, 2, 3, 4],
+                is_default=True,
+                description="Official administrative 5-day week (Mon-Fri) excluding gazetted central holidays",
+            )
+            db.add(cal)
+            db.flush()
+
+            holidays = [
+                ("Republic Day", "2026-01-26"),
+                ("Maha Shivratri", "2026-02-15"),
+                ("Holi", "2026-03-04"),
+                ("Eid-ul-Fitr", "2026-03-21"),
+                ("Good Friday", "2026-04-03"),
+                ("Mahavir Jayanti", "2026-03-31"),
+                ("Buddha Purnima", "2026-05-01"),
+                ("Independence Day", "2026-08-15"),
+                ("Milad-un-Nabi", "2026-08-26"),
+                ("Mahatma Gandhi Birthday", "2026-10-02"),
+                ("Dussehra", "2026-10-20"),
+                ("Diwali (Deepavali)", "2026-11-08"),
+                ("Guru Nanak Birthday", "2026-11-24"),
+                ("Christmas Day", "2026-12-25"),
+            ]
+            for h_name, h_date in holidays:
+                db.add(CalendarHoliday(policy_id=cal.id, name=h_name, holiday_date=h_date))
+
+        # Ensure sample OCR extractions for documents
+        if not db.query(DocumentExtraction).first():
+            docs = db.query(Document).limit(5).all()
+            for doc in docs:
+                db.add(
+                    DocumentExtraction(
+                        document_id=doc.id,
+                        file_path=f"demo/lease_{doc.id}.pdf",
+                        extracted_type="Registered Land Lease Deed",
+                        extracted_institution=doc.institution.name if doc.institution else "Demo Institute of Technology",
+                        extracted_premises_address="Plot No. 12-A, Knowledge Park II, Greater Noida, Gautam Buddha Nagar, Uttar Pradesh - 201310",
+                        candidate_commencement_date=doc.issue_date.date().isoformat() if doc.issue_date else "2020-04-01",
+                        candidate_expiry_date=doc.expiry_date.date().isoformat() if doc.expiry_date else "2050-03-31",
+                        renewal_clause_found=True,
+                        confidence_score=0.92,
+                        extracted_snippet=f"THIS LEASE DEED entered between Greater Noida Industrial Development Authority (Lessor) and {doc.institution.name if doc.institution else 'Lessee'} for a period of 30 years commencing from {doc.issue_date.date().isoformat() if doc.issue_date else '2020-04-01'} and valid through {doc.expiry_date.date().isoformat() if doc.expiry_date else '2050-03-31'}.",
+                        source_page_no=2,
+                        extraction_status="pending_human_review",
+                        created_at=clock.now(),
+                    )
+                )
+
+        # Synchronize Unified Deadline Engine across all applications, evc, undertakings, and documents
+        if db.query(Deadline).count() == 0:
+            deadline_engine.sync_all(db)
+
+        db.commit()
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

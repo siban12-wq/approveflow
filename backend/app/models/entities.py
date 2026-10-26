@@ -58,6 +58,17 @@ class User(Base):
     institution_id: Mapped[int | None] = mapped_column(ForeignKey("institutions.id"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     open_case_count: Mapped[int] = mapped_column(Integer, default=0)
+    mobile: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    account_status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    requested_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requested_institution_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     role: Mapped[Role] = relationship()
     region: Mapped[Region | None] = relationship()
@@ -228,6 +239,8 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(32), default="Valid")
     current_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    institution: Mapped[Institution] = relationship()
+
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
@@ -331,6 +344,41 @@ class AuditLog(Base):
     row_hash: Mapped[str] = mapped_column(String(64))
 
 
+class AuthToken(Base):
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)  # reset | verify
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class EmailOutbox(Base):
+    """Development email sink. Real SMTP is used only when SMTP_ENABLED=true."""
+
+    __tablename__ = "email_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    to_address: Mapped[str] = mapped_column(String(255), index=True)
+    subject: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(32), default="console")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class JobRun(Base):
     __tablename__ = "job_runs"
 
@@ -341,3 +389,90 @@ class JobRun(Base):
     items_checked: Mapped[int] = mapped_column(Integer, default=0)
     alerts_created: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CalendarPolicy(Base):
+    __tablename__ = "calendar_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    working_weekdays: Mapped[list] = mapped_column(JSON, default=list)  # [0, 1, 2, 3, 4] for Mon-Fri
+    is_default: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    holidays: Mapped[list["CalendarHoliday"]] = relationship(back_populates="policy", cascade="all, delete-orphan")
+
+
+class CalendarHoliday(Base):
+    __tablename__ = "calendar_holidays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_id: Mapped[int] = mapped_column(ForeignKey("calendar_policies.id"))
+    name: Mapped[str] = mapped_column(String(128))
+    holiday_date: Mapped[str] = mapped_column(String(32), index=True)  # YYYY-MM-DD
+    region_id: Mapped[int | None] = mapped_column(ForeignKey("regions.id"), nullable=True)
+
+    policy: Mapped[CalendarPolicy] = relationship(back_populates="holidays")
+
+
+class Deadline(Base):
+    """Unified deadline entity covering SLA, EVC, Undertakings, and Document Expiry."""
+
+    __tablename__ = "deadlines"
+    __table_args__ = (UniqueConstraint("deadline_type", "linked_entity_type", "linked_entity_id", name="uq_deadline_target"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deadline_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    deadline_type: Mapped[str] = mapped_column(String(64), index=True)
+    linked_entity_type: Mapped[str] = mapped_column(String(32), index=True)
+    linked_entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    institution_id: Mapped[int | None] = mapped_column(ForeignKey("institutions.id"), nullable=True)
+    application_id: Mapped[int | None] = mapped_column(ForeignKey("applications.id"), nullable=True)
+    responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    responsible_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    title: Mapped[str] = mapped_column(String(255))
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    calendar_policy_id: Mapped[int | None] = mapped_column(ForeignKey("calendar_policies.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_notification_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    escalation_level: Mapped[int] = mapped_column(Integer, default=0)
+    pause_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_rule_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    institution: Mapped[Institution | None] = relationship()
+    application: Mapped[Application | None] = relationship()
+    responsible_user: Mapped[User | None] = relationship()
+    calendar_policy: Mapped[CalendarPolicy | None] = relationship()
+
+
+class DocumentExtraction(Base):
+    """OCR candidate extraction with mandatory human verification before authoritative date persistence."""
+
+    __tablename__ = "document_extractions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), nullable=True, index=True)
+    file_path: Mapped[str] = mapped_column(String(512))
+    extracted_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extracted_institution: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    extracted_premises_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_commencement_date: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    candidate_expiry_date: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    renewal_clause_found: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.85)
+    extracted_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_page_no: Mapped[int | None] = mapped_column(Integer, default=1)
+    extraction_status: Mapped[str] = mapped_column(String(32), default="pending_human_review")
+    verified_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    document: Mapped[Document | None] = relationship()
+    verified_by_user: Mapped[User | None] = relationship()

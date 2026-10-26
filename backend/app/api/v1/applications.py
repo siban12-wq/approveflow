@@ -29,6 +29,21 @@ def _serialize(app: Application, db: Session, user: User) -> dict:
     stage = app.current_stage
     officer = app.assigned_officer
     stages = sorted(app.template.stages, key=lambda s: s.order_no) if app.template else []
+    
+    age = clock.days_since(app.submitted_at)
+    if app.sla_status == "overdue":
+        risk_level = "high"
+        risk_score = 0.88
+    elif app.sla_status == "approaching":
+        risk_level = "moderate"
+        risk_score = 0.62
+    elif age > 20:
+        risk_level = "moderate"
+        risk_score = 0.45
+    else:
+        risk_level = "low"
+        risk_score = 0.18
+
     return {
         "id": app.id,
         "app_id": app.app_id,
@@ -43,11 +58,13 @@ def _serialize(app: Application, db: Session, user: User) -> dict:
         "status": app.status,
         "decision": app.decision,
         "sla_status": app.sla_status,
+        "risk_level": risk_level,
+        "risk_score": risk_score,
         "sla_due_at": app.sla_due_at.isoformat() if app.sla_due_at else None,
         "stage_entered_at": app.stage_entered_at.isoformat() if app.stage_entered_at else None,
         "assigned_officer": officer.full_name if officer else None,
         "assigned_officer_id": app.assigned_officer_id,
-        "age_days": clock.days_since(app.submitted_at),
+        "age_days": age,
         "last_updated_at": app.last_updated_at.isoformat() if app.last_updated_at else None,
         "simulated": True,
         "stages": [

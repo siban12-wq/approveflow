@@ -7,16 +7,21 @@ import { Toasts } from "@/components/ui/Toast";
 
 const Landing = lazy(() => import("@/pages/Landing"));
 const Login = lazy(() => import("@/pages/Login"));
+const Signup = lazy(() => import("@/pages/Signup"));
+const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Applications = lazy(() => import("@/pages/Applications"));
 const ApplicationDetail = lazy(() => import("@/pages/ApplicationDetail"));
 const NewApplication = lazy(() => import("@/pages/NewApplication"));
+const Deadlines = lazy(() => import("@/pages/Deadlines"));
+const Calendar = lazy(() => import("@/pages/Calendar"));
 const Evc = lazy(() => import("@/pages/Evc"));
 const Undertakings = lazy(() => import("@/pages/Undertakings"));
 const Documents = lazy(() => import("@/pages/Documents"));
 const Notifications = lazy(() => import("@/pages/Notifications"));
 const Reports = lazy(() => import("@/pages/Reports"));
 const Audit = lazy(() => import("@/pages/Audit"));
+const AdminAccounts = lazy(() => import("@/pages/AdminAccounts"));
 const AdminRules = lazy(() => import("@/pages/AdminRules"));
 const AdminAlerts = lazy(() => import("@/pages/AdminAlerts"));
 const AdminMonitor = lazy(() => import("@/pages/AdminMonitor"));
@@ -54,6 +59,8 @@ export default function App() {
             <Routes location={location}>
               <Route path="/" element={<Landing />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/dev/3d" element={<Dev3D />} />
               <Route
                 path="/app"
@@ -67,12 +74,22 @@ export default function App() {
                 <Route path="applications" element={<Applications />} />
                 <Route path="applications/new" element={<NewApplication />} />
                 <Route path="applications/:id" element={<ApplicationDetail />} />
+                <Route path="deadlines" element={<Deadlines />} />
+                <Route path="calendar" element={<Calendar />} />
                 <Route path="evc" element={<Evc />} />
                 <Route path="undertakings" element={<Undertakings />} />
                 <Route path="documents" element={<Documents />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="reports" element={<Reports />} />
                 <Route path="audit" element={<Audit />} />
+                <Route
+                  path="admin/accounts"
+                  element={
+                    <Guard roles={["super_admin", "bureau_officer"]}>
+                      <AdminAccounts />
+                    </Guard>
+                  }
+                />
                 <Route
                   path="admin/rules"
                   element={

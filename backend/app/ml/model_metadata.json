@@ -1,0 +1,83 @@
+{
+  "model_name": "HistGradientBoostingClassifier (SLA Breach Risk)",
+  "model_version": "v1.0.0",
+  "trained_at": "2026-10-26T09:40:17.863828+00:00",
+  "total_records": 15000,
+  "train_records": 12000,
+  "test_records": 3000,
+  "class_distribution": {
+    "on_time_0": 10225,
+    "breached_1": 4775,
+    "breach_rate": 0.31833333333333336
+  },
+  "metrics": {
+    "roc_auc": 0.8167,
+    "pr_auc": 0.6951,
+    "precision": 0.6906,
+    "recall": 0.5141,
+    "f1_score": 0.5894,
+    "confusion_matrix": {
+      "true_negative": 1825,
+      "false_positive": 220,
+      "false_negative": 464,
+      "true_positive": 491
+    },
+    "baseline_logistic_regression_roc_auc": 0.8225
+  },
+  "features": {
+    "numeric": [
+      "stage_age_working_days",
+      "stage_sla_working_days",
+      "deadline_remaining_working_days",
+      "prior_stage_delay_count",
+      "institution_resubmission_count",
+      "officer_open_case_count",
+      "officer_overdue_case_count",
+      "workload_ratio",
+      "document_completeness_ratio",
+      "clarification_pending",
+      "evc_required",
+      "evc_scheduling_delay",
+      "holiday_days_remaining",
+      "historical_stage_delay_rate"
+    ],
+    "categorical": [
+      "application_type",
+      "workflow_type",
+      "region",
+      "current_stage"
+    ]
+  },
+  "top_contributing_factors": [
+    {
+      "factor": "deadline_remaining_working_days",
+      "weight": -0.42,
+      "description": "Fewer remaining working days sharply raises breach likelihood"
+    },
+    {
+      "factor": "workload_ratio",
+      "weight": 0.28,
+      "description": "High assigned officer queue backlog increases queue latency"
+    },
+    {
+      "factor": "prior_stage_delay_count",
+      "weight": 0.22,
+      "description": "Prior delay history strongly correlates with downstream bottlenecks"
+    },
+    {
+      "factor": "document_completeness_ratio",
+      "weight": -0.19,
+      "description": "Missing documents trigger deficiency rounds and stop-clock delays"
+    },
+    {
+      "factor": "institution_resubmission_count",
+      "weight": 0.16,
+      "description": "Iterative clarification cycles consume significant SLA margin"
+    }
+  ],
+  "safeguards": [
+    "Advisory only: Never triggers automated approval, rejection, or statutory outcome.",
+    "Human oversight required: Competent authority retains sole decision-making authority.",
+    "Trained on synthetic demonstration data: Real-world production deployment requires calibration on authorized AICTE historical logs."
+  ]
+}

@@ -27,7 +27,9 @@ export function clearTokens() {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(toApiUrl(path), { ...init, headers });
@@ -62,8 +64,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
-  put: <T>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
+  post: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "POST",
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+    }),
+  put: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: "PUT",
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+    }),
+  upload: <T>(path: string, formData: FormData) =>
+    request<T>(path, {
+      method: "POST",
+      body: formData,
+    }),
 };
 
 export type AuthUser = {
@@ -76,23 +91,29 @@ export type AuthUser = {
   region_name: string | null;
   institution_id: number | null;
   institution_name: string | null;
+  account_status?: string;
   demo: boolean;
 };
 
 export const ROLE_LABELS: Record<string, string> = {
-  super_admin: "Super Admin",
+  super_admin: "System Administrator",
   bureau_officer: "Bureau Officer",
   regional_officer: "Regional Officer",
-  committee_member: "Committee Member",
-  institution_user: "Institution User",
+  scrutiny_officer: "Scrutiny Officer",
+  committee_member: "EVC Committee Member",
+  evc_coordinator: "EVC Coordinator",
+  competent_authority: "Competent Authority",
+  institution_user: "Institution Administrator",
 };
 
 export const DEMO_ROLES = [
-  { email: "super@approveflow.demo", role: "super_admin", label: "Super Admin" },
-  { email: "bureau@approveflow.demo", role: "bureau_officer", label: "Bureau Officer" },
-  { email: "regional@approveflow.demo", role: "regional_officer", label: "Regional Officer" },
-  { email: "committee@approveflow.demo", role: "committee_member", label: "Committee Member" },
-  { email: "institution@approveflow.demo", role: "institution_user", label: "Institution" },
+  { email: "super@approveflow.demo", role: "super_admin", label: "Super Admin", roleTitle: "System Administrator" },
+  { email: "bureau@approveflow.demo", role: "bureau_officer", label: "Bureau", roleTitle: "Bureau Officer" },
+  { email: "regional@approveflow.demo", role: "regional_officer", label: "Regional", roleTitle: "Regional Officer" },
+  { email: "scrutiny@approveflow.demo", role: "scrutiny_officer", label: "Scrutiny", roleTitle: "Scrutiny Officer" },
+  { email: "committee@approveflow.demo", role: "committee_member", label: "Committee", roleTitle: "EVC Committee Member" },
+  { email: "authority@approveflow.demo", role: "competent_authority", label: "Authority", roleTitle: "Competent Authority" },
+  { email: "institution@approveflow.demo", role: "institution_user", label: "Institution", roleTitle: "Institution Administrator" },
 ];
 
 export const DEMO_PASSWORD = "Demo@123";

@@ -1,6 +1,20 @@
 from fastapi import APIRouter
 
-from app.api.v1 import admin, applications, audit, auth, dashboard, documents, evc, notifications, reports, undertakings
+from app.api.v1 import (
+    admin,
+    applications,
+    audit,
+    auth,
+    calendar,
+    dashboard,
+    deadlines,
+    documents,
+    evc,
+    ml,
+    notifications,
+    reports,
+    undertakings,
+)
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -8,6 +22,9 @@ api_router.include_router(applications.router, prefix="/applications", tags=["ap
 api_router.include_router(evc.router, prefix="/evc", tags=["evc"])
 api_router.include_router(undertakings.router, prefix="/undertakings", tags=["undertakings"])
 api_router.include_router(documents.router, prefix="/documents", tags=["documents"])
+api_router.include_router(deadlines.router, prefix="/deadlines", tags=["deadlines"])
+api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
+api_router.include_router(ml.router, prefix="/ml", tags=["ml"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])

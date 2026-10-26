@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.clock import clock
@@ -8,16 +8,22 @@ from app.core.deps import require_roles
 from app.db.session import SessionLocal, engine as db_engine, get_db
 from app.jobs.scheduler import run_job
 from app.jobs.tasks import JOBS
+from app.core.security import hash_password, new_url_token, validate_password
 from app.models.entities import (
     AlertRule,
     Base,
     EscalationRule,
+    Institution,
     JobRun,
     NotificationTemplate,
+    Region,
+    Role,
     User,
     WorkflowStage,
     WorkflowTemplate,
 )
+from app.services.audit import write_audit
+from app.services.email import get_email_provider
 
 router = APIRouter()
 
@@ -222,21 +228,305 @@ def advance_clock(days: int = 7, user: User = Depends(require_roles("super_admin
     return {"ok": True, "now": now.isoformat(), "offset_days": int(clock._offset.days)}
 
 
+def _account_row(u: User) -> dict:
+    return {
+        "id": u.id,
+        "email": u.email,
+        "full_name": u.full_name,
+        "role": u.role.code,
+        "role_name": u.role.name,
+        "region_id": u.region_id,
+        "region_name": u.region.name if u.region else None,
+        "institution_id": u.institution_id,
+        "institution_name": u.institution.name if u.institution else None,
+        "open_case_count": u.open_case_count,
+        "is_active": u.is_active,
+        "account_status": u.account_status or "active",
+        "email_verified": bool(getattr(u, "email_verified", False)),
+        "requested_role": getattr(u, "requested_role", None),
+        "requested_institution_name": getattr(u, "requested_institution_name", None),
+        "mobile": getattr(u, "mobile", None),
+        "last_login_at": u.last_login_at.isoformat() if getattr(u, "last_login_at", None) else None,
+        "created_at": u.created_at.isoformat() if getattr(u, "created_at", None) else None,
+        "status_reason": getattr(u, "status_reason", None),
+    }
+
+
 @router.get("/users")
-def list_users(db: Session = Depends(get_db), user: User = Depends(require_roles("super_admin", "bureau_officer", "regional_officer"))) -> list[dict]:
-    rows = db.query(User).options(joinedload(User.role)).all()
-    return [
-        {
-            "id": u.id,
-            "email": u.email,
-            "full_name": u.full_name,
-            "role": u.role.code,
-            "region_id": u.region_id,
-            "institution_id": u.institution_id,
-            "open_case_count": u.open_case_count,
-        }
-        for u in rows
-    ]
+def list_users(
+    status: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("super_admin", "bureau_officer", "regional_officer")),
+) -> list[dict]:
+    q = db.query(User).options(joinedload(User.role), joinedload(User.region), joinedload(User.institution))
+    if user.role.code == "regional_officer" and user.region_id:
+        q = q.filter(User.region_id == user.region_id)
+    if status:
+        q = q.filter(User.account_status == status)
+    return [_account_row(u) for u in q.order_by(User.id.desc()).all()]
+
+
+class AccountAction(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    institution_id: int | None = None
+    region_id: int | None = None
+    role: str | None = None
+
+
+def _clean_email(v: str) -> str:
+    s = (v or "").strip().lower()
+    if "@" not in s or "." not in s.split("@")[-1]:
+        raise ValueError("Invalid email address format.")
+    return s
+
+
+class ProvisionBody(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    full_name: str = Field(min_length=2, max_length=255)
+    role: str
+    reason: str = Field(min_length=3, max_length=500)
+    region_id: int | None = None
+    institution_id: int | None = None
+    mobile: str | None = None
+    password: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        return _clean_email(v)
+
+
+def _get_role(db: Session, code: str) -> Role:
+    role = db.query(Role).filter(Role.code == code).first()
+    if not role:
+        raise HTTPException(400, f"Unknown role {code}")
+    return role
+
+
+@router.post("/accounts/{user_id}/approve")
+def approve_account(
+    user_id: int,
+    body: AccountAction,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    target = db.query(User).options(joinedload(User.role)).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(404, "Account not found")
+    if target.role.code in {"super_admin"} and actor.id != target.id:
+        pass
+    if body.institution_id:
+        inst = db.get(Institution, body.institution_id)
+        if not inst:
+            raise HTTPException(400, "Institution not found")
+        target.institution_id = inst.id
+        target.region_id = inst.region_id
+    elif body.region_id:
+        if not db.get(Region, body.region_id):
+            raise HTTPException(400, "Region not found")
+        target.region_id = body.region_id
+    if body.role:
+        if body.role == "super_admin" and actor.role.code != "super_admin":
+            raise HTTPException(403, "Cannot assign system administrator")
+        target.role_id = _get_role(db, body.role).id
+    target.account_status = "active"
+    target.is_active = True
+    target.approved_at = clock.now()
+    target.approved_by_id = actor.id
+    target.status_reason = body.reason
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="account_approved",
+        entity_type="user",
+        entity_id=target.id,
+        reason=body.reason,
+        new_value=target.email,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/accounts/{user_id}/reject")
+def reject_account(
+    user_id: int,
+    body: AccountAction,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    target.account_status = "rejected"
+    target.is_active = False
+    target.status_reason = body.reason
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="account_rejected",
+        entity_type="user",
+        entity_id=target.id,
+        reason=body.reason,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/accounts/{user_id}/suspend")
+def suspend_account(
+    user_id: int,
+    body: AccountAction,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    if target.id == actor.id:
+        raise HTTPException(400, "You cannot suspend your own account")
+    target.account_status = "suspended"
+    target.is_active = False
+    target.token_version = int(target.token_version or 0) + 1
+    target.status_reason = body.reason
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="account_suspended",
+        entity_type="user",
+        entity_id=target.id,
+        reason=body.reason,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/accounts/{user_id}/reactivate")
+def reactivate_account(
+    user_id: int,
+    body: AccountAction,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    target.account_status = "active"
+    target.is_active = True
+    target.status_reason = body.reason
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="account_reactivated",
+        entity_type="user",
+        entity_id=target.id,
+        reason=body.reason,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/accounts/{user_id}/role")
+def assign_role(
+    user_id: int,
+    body: AccountAction,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    if not body.role:
+        raise HTTPException(400, "Role is required")
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "Account not found")
+    old = db.get(Role, target.role_id)
+    target.role_id = _get_role(db, body.role).id
+    target.status_reason = body.reason
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="role_assigned",
+        entity_type="user",
+        entity_id=target.id,
+        reason=body.reason,
+        old_value=old.code if old else None,
+        new_value=body.role,
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/accounts/provision")
+def provision_account(
+    body: ProvisionBody,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles("super_admin")),
+) -> dict:
+    email = body.email.lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "An account with this email already exists.")
+    if body.password:
+        err = validate_password(body.password)
+        if err:
+            raise HTTPException(400, err)
+        password = body.password
+        generated = False
+    else:
+        password = f"Tmp#{new_url_token()[:10]}A1"
+        generated = True
+    role = _get_role(db, body.role)
+    if body.institution_id and not db.get(Institution, body.institution_id):
+        raise HTTPException(400, "Institution not found")
+    if body.region_id and not db.get(Region, body.region_id):
+        raise HTTPException(400, "Region not found")
+    user = User(
+        email=email,
+        full_name=body.full_name.strip(),
+        hashed_password=hash_password(password),
+        role_id=role.id,
+        region_id=body.region_id,
+        institution_id=body.institution_id,
+        is_active=True,
+        mobile=body.mobile,
+        account_status="active",
+        email_verified=True,
+        token_version=0,
+        created_at=clock.now(),
+        approved_at=clock.now(),
+        approved_by_id=actor.id,
+        status_reason=body.reason,
+    )
+    db.add(user)
+    db.flush()
+    write_audit(
+        db,
+        actor_id=actor.id,
+        actor_role=actor.role.code,
+        actor_label=actor.email,
+        action="account_provisioned",
+        entity_type="user",
+        entity_id=user.id,
+        reason=body.reason,
+        new_value=f"{email}:{body.role}",
+    )
+    get_email_provider().send(
+        email,
+        "Your ApproveFlow account has been provisioned",
+        f"An authorised administrator created your {role.name} account.\nSign-in email: {email}\n"
+        + ("A temporary password was generated. Use forgot-password if you were not given credentials separately.\n" if generated else "Use the password provided by your administrator.\n")
+        + "This is a simulated demo environment.",
+        db,
+    )
+    db.commit()
+    return {"ok": True, "id": user.id, "temporary_password_issued": generated}
 
 
 @router.get("/jobs")

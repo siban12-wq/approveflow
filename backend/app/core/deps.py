@@ -18,8 +18,11 @@ def get_current_user(token: str | None = Depends(oauth2), db: Session = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     user_id = payload.get("sub")
     user = db.query(User).options(joinedload(User.role), joinedload(User.region), joinedload(User.institution)).filter(User.id == int(user_id)).first()
-    if not user or not user.is_active:
+    if not user or not user.is_active or getattr(user, "account_status", "active") != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User inactive or missing")
+    token_version = int(payload.get("tv", 0))
+    if token_version != int(getattr(user, "token_version", 0) or 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     return user
 
 

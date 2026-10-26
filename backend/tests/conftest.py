@@ -53,7 +53,10 @@ def _seed_min(db: Session) -> None:
         ("super_admin", "Super Admin"),
         ("bureau_officer", "Bureau Officer"),
         ("regional_officer", "Regional Officer"),
+        ("scrutiny_officer", "Scrutiny Officer"),
         ("committee_member", "Committee Member"),
+        ("evc_coordinator", "EVC Coordinator"),
+        ("competent_authority", "Competent Authority"),
         ("institution_user", "Institution User"),
     ]:
         r = Role(code=code, name=name)
@@ -72,11 +75,11 @@ def _seed_min(db: Session) -> None:
     hashed = hash_password("Demo@123")
     db.add_all(
         [
-            User(email="super@test.demo", full_name="Super", hashed_password=hashed, role_id=roles["super_admin"].id, region_id=rg.id),
-            User(email="bureau@test.demo", full_name="Bureau", hashed_password=hashed, role_id=roles["bureau_officer"].id),
-            User(email="ro@test.demo", full_name="RO", hashed_password=hashed, role_id=roles["regional_officer"].id, region_id=rg.id),
-            User(email="cm@test.demo", full_name="CM", hashed_password=hashed, role_id=roles["committee_member"].id),
-            User(email="inst@test.demo", full_name="Inst", hashed_password=hashed, role_id=roles["institution_user"].id, institution_id=inst.id, region_id=rg.id),
+            User(email="super@test.demo", full_name="Super", hashed_password=hashed, role_id=roles["super_admin"].id, region_id=rg.id, account_status="active", email_verified=True, token_version=0),
+            User(email="bureau@test.demo", full_name="Bureau", hashed_password=hashed, role_id=roles["bureau_officer"].id, account_status="active", email_verified=True, token_version=0),
+            User(email="ro@test.demo", full_name="RO", hashed_password=hashed, role_id=roles["regional_officer"].id, region_id=rg.id, account_status="active", email_verified=True, token_version=0),
+            User(email="cm@test.demo", full_name="CM", hashed_password=hashed, role_id=roles["committee_member"].id, account_status="active", email_verified=True, token_version=0),
+            User(email="inst@test.demo", full_name="Inst", hashed_password=hashed, role_id=roles["institution_user"].id, institution_id=inst.id, region_id=rg.id, account_status="active", email_verified=True, token_version=0),
         ]
     )
     for code, name, stages in TEMPLATES:
@@ -103,4 +106,4 @@ def _seed_min(db: Session) -> None:
 def user_by_role(db: Session, code: str) -> User:
     from sqlalchemy.orm import joinedload
 
-    return db.query(User).options(joinedload(User.role)).join(Role).filter(Role.code == code).one()
+    return db.query(User).options(joinedload(User.role)).join(Role).filter(Role.code == code).first()

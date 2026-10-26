@@ -1,7 +1,9 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   Bell,
+  Calendar,
   ClipboardList,
+  Clock,
   FileText,
   Gavel,
   LayoutDashboard,
@@ -10,6 +12,7 @@ import {
   ScrollText,
   Settings,
   Shield,
+  Users,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/store/auth";
@@ -25,6 +28,8 @@ import { useEffect } from "react";
 const NAV = [
   { to: "/app", label: "Dashboard", icon: LayoutDashboard },
   { to: "/app/applications", label: "Applications", icon: ClipboardList },
+  { to: "/app/deadlines", label: "Deadlines", icon: Clock },
+  { to: "/app/calendar", label: "Working calendar", icon: Calendar },
   { to: "/app/evc", label: "EVC", icon: Map },
   { to: "/app/undertakings", label: "Undertakings", icon: FileText },
   { to: "/app/documents", label: "Documents", icon: ScrollText },
@@ -92,6 +97,9 @@ export function AppShell() {
             {admin && (
               <>
                 <p className="px-3 pt-4 text-xs uppercase tracking-wide text-slate-400">Admin</p>
+                <NavLink to="/app/admin/accounts" className="flex items-center gap-2 rounded-xl px-3 py-2 text-slate-600">
+                  <Users size={16} /> User accounts
+                </NavLink>
                 <NavLink to="/app/admin/rules" className="flex items-center gap-2 rounded-xl px-3 py-2 text-slate-600">
                   <Settings size={16} /> Workflow rules
                 </NavLink>

@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_from: str = "noreply@approveflow.demo"
+    frontend_url: str = "http://localhost:5173"
+    password_reset_expire_minutes: int = 30
+    login_lock_threshold: int = 8
+    login_lock_minutes: int = 15
 
     job_interval_seconds: int = 120
     demo_mode: bool = True
